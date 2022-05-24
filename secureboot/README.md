@@ -18,9 +18,9 @@ Stdin and stdout/stderr are mapped to the TCP socket.
 
 ```py
 cmd = [
-    '/usr/bin/qemu-system-i386', 
-    '-drive', f'format=raw,file={bootloader_path}', 
-    '-drive', f'format=raw,file={mbr_path}', 
+    '/usr/bin/qemu-system-i386',
+    '-drive', f'format=raw,file={bootloader_path}',
+    '-drive', f'format=raw,file={mbr_path}',
     '-drive', f'format=raw,file={flag_path}',
     '-display', 'curses',
     '-monitor', 'none',
@@ -220,7 +220,7 @@ loop:
     lodsb        # load byte and increment
     mov ch, al
     mov cl, al
-    
+
     # setup print
     mov ah, 0x0e
     mov bx, 0x0007
