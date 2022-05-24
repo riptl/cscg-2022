@@ -96,7 +96,9 @@ The tool [CyberChef](https://gchq.github.io/CyberChef/) bundles a variety of has
 
 The bootloader is thus treated as a black box with unknown cryptography until we can extract more info.
 
-## Flag 1: Obtaining the test bootloader image
+## Flag 1
+
+_Obtaining the test bootloader image_
 
 Challenge name: Secureboot
 **Category**: Pwn
