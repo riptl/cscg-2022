@@ -8,6 +8,10 @@
 >
 > The flag for each stage in on an attached drive. Details on the deployment can be found in the Dockerfile.
 
+* **Categories:** Pwn, Crypto, Reverse Engineering
+* **Difficulty:** Hard
+* **Author:** localo
+
 ## Exploration
 
 ### Setup
@@ -99,9 +103,6 @@ The bootloader is thus treated as a black box with unknown cryptography until we
 ## Flag 1
 
 _Obtaining the test bootloader image_
-
-Challenge name: Secureboot
-**Category**: Pwn
 
 None of the available images in perform any disk accesses nor are they supposed to allow arbitrary memory access.
 As suggested by the hints, we'll try building a read primitive exploit.
@@ -207,7 +208,7 @@ Due to size constraints, the dump procedure is very simple.
   - `print(char(0x41 + (al >> 4)))`
   - `print(char(0x41 + (al & 0x0f)))`
 
-```asm
+```
 # Load flag into memory using "read sector" BIOS interrupt.
     mov si, 0    # point source to 0000:0000
     mov ax, 0x202
@@ -243,7 +244,7 @@ loop:
 
 To assemble, use [Keystone](https://www.keystone-engine.org/).
 
-```
+```shell
 kstool -b x16 "$(cat ./shellcode.s)" 7e02 | xxd -i -c8
 ```
 
