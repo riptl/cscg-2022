@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -73,6 +74,9 @@ func loadMBR(filePath string) (mbr [512]byte, sig [8]byte, err error) {
 	defer f.Close()
 
 	_, err = io.ReadFull(f, mbr[:])
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		err = nil
+	}
 	_, _ = io.ReadFull(f, sig[:])
 	return
 }
