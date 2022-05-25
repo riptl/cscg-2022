@@ -9,7 +9,7 @@
 > The flag for each stage in on an attached drive. Details on the deployment can be found in the Dockerfile.
 
 * **Categories:** Pwn, Reverse Engineering, Crypto
-* **Difficulty:** Hard
+* **Difficulty:** Medium
 * **Author:** localo
 
 ## Exploration
@@ -380,7 +380,7 @@ func decrypt8(loader *[512]byte, data *[8]byte, key *[8]byte) {
 
 More precisely, this decryption algorithm reads the following input:
 - The encrypted hash at `7e00..7e08`
-- The bootloader content `7c00..7d00`
+- The bootloader content `0600..0700`
 - The encryption key at `06ed..06f5` (value `4100410041004100`)
 
 After decryption, this value is then compared against the result of the hash function.
@@ -443,3 +443,41 @@ b80202bb0090ba8200b90100cd13be0090ac08c07406b40ecd10ebf5faf4
 000000000000000000000000000000000000000000000000000000000000
 000067675399978ff00bEOF
 ```
+
+## Flag 3
+
+_Sign the image with the production key_
+
+As expected, we get a signature error when trying to run the "basic" test-signed image on the prod environment.
+
+What's interesting however is that the signature hash is now different: `EF9580875A3CE091`.
+Presumably, only the encryption key is different between test and prod.
+The hash algorithm does not directly access the encryption key (`06ed..06f5`).
+It does however index the loader memory in `0600..0700`.
+
+The reconstructed hash function is extended to report which bootloader bytes have been sampled.
+
+```shell
+go run crypto.go -bootloader=test_bootloader.bin -target=basic-test.bin -v=4 | grep loader
+...
+  loader[ed] =   66
+  loader[ee] =  135
+  loader[ef] =    0
+  loader[f0] =    0
+  loader[f1] =    0
+  loader[f2] =    0
+  loader[f3] =  165
+  loader[f4] =   68
+  loader[f5] =   63
+...
+```
+
+Surprisingly, about 63% of bootloader bytes are never accessed by the hash function.
+
+```
+go run crypto.go -bootloader=test_bootloader.bin -target=basic-test.bin -v=4 | grep loader | grep '=    0' | wc -l
+163
+```
+
+This forms a simple, but exploitable side-channel:
+Crafted input allows using the hash function to check for equality of certain ranges of bytes.

@@ -41,6 +41,14 @@ func main() {
 	}
 
 	hash := hasher.Sum(data[:])
+	if *verbosity == 4 {
+		// Dump data accesses to loader binary.
+		fmt.Println("Sampling")
+		for i, v := range hasher.sampling {
+			fmt.Printf("  loader[%02x] = %4d\n", i, v)
+		}
+	}
+
 	fmt.Printf("Image hash:      %x\n", hash[:])
 	fmt.Printf("Image signature: %x\n", providedSig[:])
 
@@ -101,6 +109,7 @@ func patchSig(filePath string, sig [8]byte) error {
 type bootHasher struct {
 	loader    *[512]byte
 	verbosity int
+	sampling  [256]uint // reads from "loader"
 
 	sig1 [8]byte
 	sig2 [8]byte
@@ -109,6 +118,7 @@ type bootHasher struct {
 func (h *bootHasher) Reset() {
 	h.sig1 = [8]byte{}
 	h.sig2 = [8]byte{}
+	h.sampling = [256]uint{}
 }
 
 func (h *bootHasher) Sum(b []byte) [8]byte {
@@ -148,6 +158,7 @@ func (h *bootHasher) block(data [8]byte) {
 		al += ah
 		h.debugf(4, "      ax=%02x%02x (add al, ah)\n", ah, al)
 		al = h.loader[al]
+		h.sampling[al]++
 		h.debugf(4, "      ax=%02x%02x (xlatb)\n", ah, al)
 		dx = (dx + 1) % 8
 
