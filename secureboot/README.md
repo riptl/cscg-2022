@@ -8,7 +8,7 @@
 >
 > The flag for each stage in on an attached drive. Details on the deployment can be found in the Dockerfile.
 
-* **Categories:** Pwn, Crypto, Reverse Engineering
+* **Categories:** Pwn, Reverse Engineering, Crypto
 * **Difficulty:** Hard
 * **Author:** localo
 
@@ -249,3 +249,125 @@ kstool -b x16 "$(cat ./shellcode.s)" 7e02 | xxd -i -c8
 ```
 
 Go was used to automate the upload of input and download/decoding of the memory dump.
+
+```shell
+python3 -c 'print(0x9000)'
+36864
+
+dd bs=1 if=dump_with_test_flag.bin skip=36864 status=none | strings | head -n1
+...FLAG...
+
+dd bs=1 count=512 if=dump_with_test_bootloader.bin skip=36864 of=test_bootloader.bin
+```
+
+The test environment can now be run locally.
+
+```shell
+qemu-system-i386 \
+  -display curses -monitor -nographic \
+  -drive format=raw,file=./test_booloader.bin \
+  -drive format=raw,file=./basic-test_signed
+```
+
+## Flag 2
+
+_Reverse engineer the bootloader and sign your own image with the test key_
+
+Again, we start with a debugger session, this time with the bootloader attached.
+This time, execution is halted until the debugger connects to allow tracing the bootloader step by step.
+
+```shell
+# Window 1
+qemu-system-i386 \
+  -s -S \
+  -display curses -monitor -nographic \
+  -drive format=raw,file=./test_booloader.bin \
+  -drive format=raw,file=./basic-test_signed
+# Window 2
+r2 -b 16 -d gdb://localhost:1234
+```
+
+Additionally, we load the full memory dump from earlier into [Ghidra](https://ghidra-sre.org/).
+
+### Bootloader Relocation
+
+Upon startup, the bootloader relocates itself from `0x7c00` to `0x0600`.
+
+```asm
+0000:7c01 bc007c          MOV        SP,0x7c00
+0000:7c04 be007c          MOV        SI,0x7c00
+0000:7c07 bf0006          MOV        DI,0x600
+0000:7c0a b98000          MOV        CX,0x80
+0000:7c0d fc              CLD
+0000:7c0e f366a5          MOVSD.REP  ES:DI,SI
+0000:7c11 66ea19060       JMPF       0x0:LAB_0000_0619
+```
+
+Then, it loads the second drive (program) to `0x7c00`.
+
+```asm
+0000:061a b80202          MOV        AX,0x202
+0000:061d bb007c          MOV        BX,0x7c00
+0000:0620 b281            MOV        DL,0x81
+0000:0622 b90100          MOV        CX,0x1
+0000:0625 b600            MOV        DH,0x0
+0000:0627 cd13            INT        0x13
+```
+
+### Hash Algorithm
+
+`0764..076c` (sig_1) stores a copy of the hash seen in the bootloader error screen.
+`076c..0774` (sig_2) appears to be a scratch area for hash calculation.
+The hash is written by the main routine code at `0629..066b`.
+
+Tracing the outer loop of the hash algorithm (at `0630`) reveals that
+the algorithm steps along the disk in blocks of eight bytes.
+
+```
+:> db 0000:0630
+
+:> dc
+hit breakpoint at: 0x630
+:> px16 @0000:0764
+- offset -  0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0123456789ABCDEF
+0000:0764  0000 0000 0000 0000 0000 0000 0000 0000  ................
+:> dr edi
+0x00007c00
+
+:> dc
+hit breakpoint at: 0x630
+:> px16 @0000:0764
+- offset -  0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0123456789ABCDEF
+0000:0764  7fbc de37 1f78 7dc7 0000 0000 0000 0000  ...7.x}.........
+:> dr edi
+0x00007c08
+
+:> dc
+hit breakpoint at: 0x630
+:> px16 @0000:0764
+- offset -  0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0123456789ABCDEF
+0000:0764  ef15 531a ff28 8a0c 7fbc de37 1f78 7dc7  ..S..(.....7.x}.
+:> dr edi
+0x00007c10
+```
+
+At `069c` is a one-way function encrypting an 8-byte block of data using the bootloader ROM as the encryption key.
+
+Together, the hash function processes blocks as follows.
+- Swap `sig_2 <- sig_1` (at `0632..063c`)
+- `sig_1 <- encrypt(block, key)` (at func `069c`)
+- `sig_1 <- XOR(sig_1, sig_2)` (at `0647..065c`)
+
+### Signature check decryption algorithm
+
+The function at `06c2` transforms the "signature" at `7e00..7e08` (i.e. the last 8 bytes of the second disk).
+Before, it is `f93a50e96235aa11`, afterwards it is `b77fc96268c76d92` (the same value as the decrypted hash).
+
+This value is then checked against the result of the hash function.
+
+```
+0000:0678 be007e          MOV        SI,0x7e00
+0000:067b 8d3e6407        LEA        DI,[0x764]
+0000:067f b90800          MOV        CX,0x8
+0000:0682 f3a6            CMPSB.REPE ES:DI,SI
+```
