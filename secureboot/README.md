@@ -60,7 +60,7 @@ The four example inputs for disk 2 are bootable disks (MBR) with their source co
 All four programs run fine as standalone.
 
 ```shell
-qemu-system-i386 -drive format=raw,file=./basic-test_signed -display curses -monitor none -nographic
+qemu-system-i386 -drive format=raw,file=./basic-test.bin -display curses -monitor none -nographic
 ```
 
 When providing these images to the challenge server, they seem to execute identically.
@@ -116,7 +116,7 @@ The program's allocated memory can be inspected by running it in QEMU with a deb
 
 ```shell
 # Window 1
-qemu-system-i386 -display curses -monitor none -drive format=raw,file=./basic-test_signed -s
+qemu-system-i386 -display curses -monitor none -drive format=raw,file=./basic-test.bin -s
 # Window 2
 r2 -b 16 -d gdb://localhost:1234
 ```
@@ -266,8 +266,11 @@ The test environment can now be run locally.
 qemu-system-i386 \
   -display curses -monitor -nographic \
   -drive format=raw,file=./test_booloader.bin \
-  -drive format=raw,file=./basic-test_signed
+  -drive format=raw,file=./basic-test.bin
 ```
+
+Note: While the bootloader is still loaded at `0x0600`, some important initialized data has been overriden already, modifying the hash check behavior, and failing sig verify.
+This is why we need a clean dump of the bootloader disk.
 
 ## Flag 2
 
@@ -282,7 +285,7 @@ qemu-system-i386 \
   -s -S \
   -display curses -monitor -nographic \
   -drive format=raw,file=./test_booloader.bin \
-  -drive format=raw,file=./basic-test_signed
+  -drive format=raw,file=./basic-test.bin
 # Window 2
 r2 -b 16 -d gdb://localhost:1234
 ```
@@ -363,11 +366,57 @@ Together, the hash function processes blocks as follows.
 The function at `06c2` transforms the "signature" at `7e00..7e08` (i.e. the last 8 bytes of the second disk).
 Before, it is `f93a50e96235aa11`, afterwards it is `b77fc96268c76d92` (the same value as the decrypted hash).
 
-This value is then checked against the result of the hash function.
+Reverse engineering of the function's content reveals this pseudocode.
+
+```go
+func decrypt8(loader *[512]byte, data *[8]byte, key *[8]byte) {
+	for cx := uint16(0x100); cx > 0; cx-- {
+		dx1 := (cx - 1) % 8
+		dx2 := cx % 8
+		data[dx2] = bits.RotateLeft8(data[dx2], 7) - loader[data[dx1]+key[dx]]
+	}
+}
+```
+
+More precisely, this decryption algorithm reads the following input:
+- The encrypted hash at `7e00..7e08`
+- The bootloader content `7c00..7d00`
+- The encryption key at `06ed..06f5` (value `4100410041004100`)
+
+After decryption, this value is then compared against the result of the hash function.
 
 ```
 0000:0678 be007e          MOV        SI,0x7e00
 0000:067b 8d3e6407        LEA        DI,[0x764]
 0000:067f b90800          MOV        CX,0x8
 0000:0682 f3a6            CMPSB.REPE ES:DI,SI
+```
+
+In order to get the second flag we need to build the inverse function to the decryption algorithm.
+The encryption function is attained by reversing the order of operations within the loop
+and reversing the order of iteration.
+
+```go
+func encrypt8(loader *[512]byte, data *[8]byte, key *[8]byte) {
+	for cx := uint16(0); cx < 0x100; cx++ {
+		dx2 := (cx + 1) % 8
+		dx1 := cx % 8
+		data[dx2] = bits.RotateLeft8(data[dx2]+loader[data[dx1]+key[dx1]], 1)
+	}
+}
+```
+
+### Getting the flag
+
+All cryptographic operations so far have been added to `crypto.go` (hash, decrypt, encrypt).
+
+To test our tool, we run it over the test bootloader & basic image.
+
+```
+% go run ./crypto.go -bootloader=./test_booloader.bin -target=./basic-test.bin -key 4100410041004100
+Image hash:      b77fc96268c76d92
+Image signature: f93a50e96235aa11
+Expected hash:   b77fc96268c76d92
+OK
+Fake signature:  f93a50e96235aa11
 ```

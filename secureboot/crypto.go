@@ -16,6 +16,7 @@ func main() {
 	targetPath := flag.String("target", "", "Path to target disk image")
 	verbosity := flag.Int("v", 0, "Verbosity level (0-4)")
 	hexKey := flag.String("key", "4100410041004100", "Encryption key in hex")
+	patch := flag.Bool("patch", false, "Patch target with fake signature")
 	flag.Parse()
 	var key [8]byte
 	keyN, keyErr := hex.Decode(key[:], []byte(*hexKey))
@@ -32,7 +33,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_ = providedSig
 
 	hasher := bootHasher{
 		loader:    &loader,
@@ -52,18 +52,46 @@ func main() {
 	} else {
 		fmt.Println("FAIL")
 	}
+
+	fakeSig := hash
+	encrypt8(&loader, &fakeSig, &key, *verbosity >= 1)
+	fmt.Printf("Fake signature:  %x\n", fakeSig[:])
+
+	if *patch {
+		if err := patchSig(*targetPath, fakeSig); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Patched signature")
+	}
 }
 
 func loadMBR(filePath string) (mbr [512]byte, sig [8]byte, err error) {
-	file, err := os.Open(filePath)
+	f, err := os.Open(filePath)
 	if err != nil {
 		return [512]byte{}, [8]byte{}, err
 	}
-	defer file.Close()
+	defer f.Close()
 
-	_, err = io.ReadFull(file, mbr[:])
-	_, _ = io.ReadFull(file, sig[:])
+	_, err = io.ReadFull(f, mbr[:])
+	_, _ = io.ReadFull(f, sig[:])
 	return
+}
+
+func patchSig(filePath string, sig [8]byte) error {
+	f, err := os.OpenFile(filePath, os.O_WRONLY, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(0x200, 0); err != nil {
+		return err
+	}
+	if _, err := f.Write(sig[:]); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type bootHasher struct {
@@ -125,7 +153,6 @@ func (h *bootHasher) block(data [8]byte) {
 
 		h.debugf(3, "    round %02d: %x\n", 0x100-i, h.sig1[:])
 	}
-	return
 }
 
 func (b *bootHasher) debugf(v int, x string, args ...any) {
@@ -134,33 +161,26 @@ func (b *bootHasher) debugf(v int, x string, args ...any) {
 	}
 }
 
-func decrypt8(loader *[512]byte, data *[8]byte /* si */, key *[8]byte /* di */, verbose bool) {
+// Function at 0x06c2
+func decrypt8(loader *[512]byte, data *[8]byte, key *[8]byte, verbose bool) {
 	for cx := uint16(0x100); cx > 0; cx-- {
-		dx := (cx - 1) % 8
-
-		// mov ah, byte [esi + edx]
-		ah := data[dx]
-		// mov al, byte [edi + edx]
-		al := key[dx]
-
-		// aad
-		al = ah + al
-		ah = 0
-
-		// xlatb
-		al = loader[al]
-
-		dx = (dx + 1) % 8
-
-		// add esi, edx
-		// mov ah, byte [si]
-		ah = data[dx]
-		ah = bits.RotateLeft8(ah, 7)
-		ah -= al
-		data[dx] = ah
-
+		dx1 := (cx - 1) % 8
+		dx2 := cx % 8
+		data[dx2] = bits.RotateLeft8(data[dx2], 7) - loader[data[dx1]+key[dx1]]
 		if verbose {
-			fmt.Printf("  decrypt8 %02d: %x\n", 0x100-cx, data[:])
+			fmt.Printf("  decrypt8 %3d: %x\n", cx, data[:])
+		}
+	}
+}
+
+// Inverse of decrypt8
+func encrypt8(loader *[512]byte, data *[8]byte, key *[8]byte, verbose bool) {
+	for cx := uint16(0); cx < 0x100; cx++ {
+		dx2 := (cx + 1) % 8
+		dx1 := cx % 8
+		data[dx2] = bits.RotateLeft8(data[dx2]+loader[data[dx1]+key[dx1]], 1)
+		if verbose {
+			fmt.Printf("  encrypt8 %3d: %x\n", cx, data[:])
 		}
 	}
 }
