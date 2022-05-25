@@ -492,7 +492,7 @@ func (h *bootHasher) block(data [8]byte) {
 }
 ```
 
-This allows us to craft a program with the hash zero both on the test and prod bootloaders.
+This allows us to craft a program with the hash zero (`0000000000000000`) both on the test and prod bootloaders.
 
 ```
 fcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfc
@@ -515,7 +515,7 @@ fcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfc
 fcfcc983957b5ca858cdEOF
 ```
 
-As expected, the hash function only samples byte `0xfc`.
+As expected, the hash function only samples byte `0xfc` (reading `0x00`).
 
 ```
 go run crypto.go -sample -bootloader=test_bootloader.bin -target=fc.bin
@@ -529,13 +529,15 @@ go run crypto.go -sample -bootloader=test_bootloader.bin -target=fc.bin
 This forms a simple, but exploitable side-channel:
 Crafted input allows using the hash function to check for equality of certain bytes, including the signing key bytes.
 
-If we can keep the hash zero up until the very last block,
-we can brute force the last 100 hash rounds into only accessing only one target byte.
+If we can keep the hash state zero up until the very last block,
+we can brute force the last 100 hash rounds into only sampling one specific key byte.
 
-This reduces the complexity of attacking the key from `2^64` (brute force) to about `8*256` (fairly cheap).
+This reduces the complexity of attacking the key from `2^64` (brute force) to about `8*256*65536` (fairly cheap).
 
-Our attack involves brute forcing the block of the last two bytes until we can find one input
-that accesses only the target byte within the search region (key slice of `ed..f5`).
+Our attack involves brute forcing the last two bytes (nonce) until we can find one input
+that samples only the target byte within the search region (key slice of `ed..f5`).
+This is implemented by maintaining a bitset of sampled bootloader bytes while hashing.
+A valid nonce is found when a hash operation for a given key byte and input (nonce) does not sample any other key bytes.
 
 ```
 ..fcfcfc0000
@@ -550,7 +552,7 @@ Therefore, we will have to find such a nonce for each possible value of the targ
 Then, repeat this step for each target byte, beginning with `ed`.
 
 This has been implemented in the "leak" command of `crypto.go`.
-It takes about 5 minutes to scan through about `65536 * 256` (about 16.8 million) combinations of the bootloader image (skipping unnecessary calculations).
+It takes about 5 minutes to run through about `65536 * 256` (about 16.8 million) combinations (skipping unnecessary calculations).
 
 ```
 go run ~/prj/cscg-2022/secureboot/crypto.go -leak -bootloader=./test_bootloader_original.bin -leak-index=0xed
@@ -559,264 +561,33 @@ go run ~/prj/cscg-2022/secureboot/crypto.go -leak -bootloader=./test_bootloader_
 We are left with 256 crafted images, one for each possible value of the `ed` byte.
 If one of the following hashes matches, we've found the correct value.
 
-<details>
-<summary>Suffix map for byte <code>ed</code></summary>
-<pre>
+```
 loader[ed]=00 nonce=0ce7 hash=c0e2ce1b9df15271
 loader[ed]=01 nonce=06d0 hash=27a168ac5baa2705
 loader[ed]=02 nonce=0dc7 hash=9ffe800a159d3930
 loader[ed]=03 nonce=0155 hash=f65c9a98dffc5b47
 loader[ed]=04 nonce=058e hash=19cc2d369ab3d521
 loader[ed]=05 nonce=0590 hash=723ab8dc23605a35
-loader[ed]=06 nonce=058e hash=7dbf2565b56296a0
-loader[ed]=07 nonce=10aa hash=2829eaca43e0557b
-loader[ed]=08 nonce=0470 hash=fde15d2d62cd138c
-loader[ed]=09 nonce=10aa hash=f9b85d1029a58883
-loader[ed]=0a nonce=01dd hash=1ac586ef891449dd
-loader[ed]=0b nonce=04fa hash=bc568fd768f14e72
-loader[ed]=0c nonce=0313 hash=123b4bc60bcf7573
-loader[ed]=0d nonce=0780 hash=071fbd40c3797876
-loader[ed]=0e nonce=01fd hash=21ada20981387d85
-loader[ed]=0f nonce=0b27 hash=ab9373802061d74b
-loader[ed]=10 nonce=19d5 hash=2a4eee966be84673
-loader[ed]=11 nonce=09f2 hash=0a13ee65acd74a09
-loader[ed]=12 nonce=08d5 hash=02aaab24b354b242
-loader[ed]=13 nonce=10aa hash=195b0d007c5b3eb5
-loader[ed]=14 nonce=0755 hash=9b51962425497520
-loader[ed]=15 nonce=040f hash=b70454256b2d40cd
-loader[ed]=16 nonce=0320 hash=97df9a20cce4bc07
-loader[ed]=17 nonce=0673 hash=488506a5247507b3
-loader[ed]=18 nonce=008c hash=a4963b7d3c669480
-loader[ed]=19 nonce=064b hash=3f0dd3e6a65f8f1d
-loader[ed]=1a nonce=1678 hash=3030cedb5bc32209
-loader[ed]=1b nonce=222d hash=07011b1051c2b5cd
-loader[ed]=1c nonce=00f4 hash=375cb0e2e1134f14
-loader[ed]=1d nonce=04fa hash=b6b2cec2d82bffdd
-loader[ed]=1e nonce=01d2 hash=9a8105bbacc6ab55
-loader[ed]=1f nonce=058f hash=1fc1e2eb996430eb
-loader[ed]=20 nonce=04dd hash=8c7f12365df96a7a
-loader[ed]=21 nonce=10aa hash=faba67a851db8293
-loader[ed]=22 nonce=0231 hash=391851d4ac6767b6
-loader[ed]=23 nonce=0447 hash=be43acb9e865bc63
-loader[ed]=24 nonce=008c hash=a58c20222b93d6d6
-loader[ed]=25 nonce=1025 hash=dc8abb089a7f070b
-loader[ed]=26 nonce=04fa hash=e0a7a12c26fc0178
-loader[ed]=27 nonce=0320 hash=26032c20fe8510b4
-loader[ed]=28 nonce=0c32 hash=602c07bc7e4a8dc5
-loader[ed]=29 nonce=0305 hash=672f15c62293a828
-loader[ed]=2a nonce=040f hash=0c1dd2d543ffca82
-loader[ed]=2b nonce=04fa hash=aa4bdf6b388f7ad7
-loader[ed]=2c nonce=04b3 hash=d682344fef174f20
-loader[ed]=2d nonce=04fa hash=356fd93800eae3ea
-loader[ed]=2e nonce=164b hash=8c11f9b664ad4e02
-loader[ed]=2f nonce=0183 hash=6dcdbab4740f57f6
-loader[ed]=30 nonce=040f hash=a33bb4e39ed2c9fa
-loader[ed]=31 nonce=04fa hash=562398c74a01c0bc
-loader[ed]=32 nonce=08d5 hash=7640a0ba74826b17
-loader[ed]=33 nonce=00cb hash=7ed60c26a8a35a93
-loader[ed]=34 nonce=0532 hash=16c1bde86ca42e2f
-loader[ed]=35 nonce=0710 hash=aeb17c7fa5802b90
-loader[ed]=36 nonce=0b0e hash=3196cfca1468f4bb
-loader[ed]=37 nonce=1044 hash=2c522bb4ca46c833
-loader[ed]=38 nonce=0532 hash=9da6ca982ea1f214
-loader[ed]=39 nonce=058e hash=f9709aef66702ef5
-loader[ed]=3a nonce=0320 hash=325ae05b30c14701
-loader[ed]=3b nonce=0313 hash=6246820ff9baa3ed
-loader[ed]=3c nonce=0db4 hash=b53189d3b82a91af
-loader[ed]=3d nonce=0c32 hash=009a505765a22bd9
-loader[ed]=3e nonce=0320 hash=3b0f8a8db5e6bc4c
-loader[ed]=3f nonce=0134 hash=41bcb2054af9d60b
-loader[ed]=40 nonce=1791 hash=da62a7e724c4a97a
-loader[ed]=41 nonce=0718 hash=3d495b2442fc6aeb
-loader[ed]=42 nonce=10aa hash=052bb256c1fd276b
-loader[ed]=43 nonce=0145 hash=835dca582b5afd7e
-loader[ed]=44 nonce=04dd hash=db76af15db8e2646
-loader[ed]=45 nonce=0729 hash=dd172f940b097e0b
-loader[ed]=46 nonce=04fa hash=80e43d97ddc0c4bf
-loader[ed]=47 nonce=0383 hash=ebb46861fdbf8f91
-loader[ed]=48 nonce=0434 hash=ca3057340bb06979
-loader[ed]=49 nonce=05ce hash=c8cfcf3aaabfd92a
-loader[ed]=4a nonce=0ea9 hash=3f7f28f94d319e7c
-loader[ed]=4b nonce=0320 hash=f3aa8dac63bf575a
-loader[ed]=4c nonce=059b hash=64411372cf049827
-loader[ed]=4d nonce=1ba8 hash=21913a5a001f2011
-loader[ed]=4e nonce=03ed hash=f8b03d7e045135c3
-loader[ed]=4f nonce=0320 hash=4a58c568dc4f5dfb
-loader[ed]=50 nonce=06bb hash=e70b0e20b71ab5a2
-loader[ed]=51 nonce=04dd hash=90690e151089006d
-loader[ed]=52 nonce=0683 hash=6921a7e6457cbba3
-loader[ed]=53 nonce=039d hash=b77c42704cce26c2
-loader[ed]=54 nonce=03c0 hash=e217353687603c13
-loader[ed]=55 nonce=006e hash=07007d5ff05a01d2
-loader[ed]=56 nonce=001a hash=3fb6e68b6878d190
-loader[ed]=57 nonce=04fa hash=fdaf9609999d84d6
-loader[ed]=58 nonce=0d02 hash=1b2d372e5fd8a063
-loader[ed]=59 nonce=0685 hash=69553ee49200ad4c
-loader[ed]=5a nonce=10aa hash=378e23fa5d3c7301
-loader[ed]=5b nonce=0265 hash=bdec507270a265e9
-loader[ed]=5c nonce=08d5 hash=c57997bcd425be26
-loader[ed]=5d nonce=033b hash=9a28fb2ca80e7e31
-loader[ed]=5e nonce=04dd hash=08e84fb1d04b25df
-loader[ed]=5f nonce=116f hash=9c59e47813160a53
-loader[ed]=60 nonce=12b2 hash=b5be817940968abd
-loader[ed]=61 nonce=04fa hash=9575481548d9a3d3
-loader[ed]=62 nonce=0b35 hash=a1bf13430dd415b7
-loader[ed]=63 nonce=04fa hash=0484d63765b66c3a
-loader[ed]=64 nonce=05ed hash=97874bb4849ff3f7
-loader[ed]=65 nonce=212e hash=057da237002c262d
-loader[ed]=66 nonce=04ef hash=05d8059734198666
-loader[ed]=67 nonce=04fa hash=acb1d564e57c08b3
-loader[ed]=68 nonce=04dd hash=570bd20b24015bd9
-loader[ed]=69 nonce=10aa hash=de03092ba7c7274e
-loader[ed]=6a nonce=04fa hash=3843c0fa35e7e5b3
-loader[ed]=6b nonce=04fa hash=be96105b2fc4b1a0
-loader[ed]=6c nonce=07f5 hash=b283a0fb44e215a1
-loader[ed]=6d nonce=00f4 hash=e485074fea6815aa
-loader[ed]=6e nonce=288e hash=19a430859cafbdff
-loader[ed]=6f nonce=04ef hash=da1afa5b7a68b5ef
-loader[ed]=70 nonce=07ae hash=1bbc34e006060ef6
-loader[ed]=71 nonce=0320 hash=ecc9068c06d69146
-loader[ed]=72 nonce=0590 hash=65bd22a8614b29d9
-loader[ed]=73 nonce=04dd hash=9ab470b8c3bd27c1
-loader[ed]=74 nonce=0447 hash=6d21d03c598e4180
-loader[ed]=75 nonce=0b93 hash=5879a0dd91168dca
-loader[ed]=76 nonce=007c hash=f00cb00ec98cc898
-loader[ed]=77 nonce=14d4 hash=225a1bfa64d9f002
-loader[ed]=78 nonce=040f hash=55d7739cedb80805
-loader[ed]=79 nonce=03ed hash=50b3ac522e1e66b0
-loader[ed]=7a nonce=025c hash=590aa3fab60f23c1
-loader[ed]=7b nonce=0728 hash=5a179fa2bdfdef02
-loader[ed]=7c nonce=0cd5 hash=c7fe18caa5c77ff0
-loader[ed]=7d nonce=04fa hash=99c9d9a176da65c1
-loader[ed]=7e nonce=0134 hash=ef2823093093b086
-loader[ed]=7f nonce=0997 hash=f9262028a9cd7ef3
-loader[ed]=80 nonce=08d5 hash=e13a1bb02285d4bd
-loader[ed]=81 nonce=0b0e hash=204ac470bc14d554
-loader[ed]=82 nonce=13fb hash=002236ba731b5851
-loader[ed]=83 nonce=040f hash=afcb7aa997ca0684
-loader[ed]=84 nonce=2b12 hash=238926cb65cb6c66
-loader[ed]=85 nonce=10aa hash=76a4ee321f595b07
-loader[ed]=86 nonce=0c32 hash=12b3af2391aa48dc
-loader[ed]=87 nonce=0532 hash=a687e262d139603b
-loader[ed]=88 nonce=0729 hash=85c978b308474f8e
-loader[ed]=89 nonce=0d83 hash=d9ef131f1ab5cda6
-loader[ed]=8a nonce=0704 hash=a5149860602104f6
-loader[ed]=8b nonce=0e7c hash=3aeff0b1c4a3262e
-loader[ed]=8c nonce=13fb hash=638ca3159a5b164d
-loader[ed]=8d nonce=0485 hash=823d0c4407035779
-loader[ed]=8e nonce=046c hash=eb1d7ce54a91c5e2
-loader[ed]=8f nonce=0b35 hash=5939b6fa9a17b256
-loader[ed]=90 nonce=116f hash=a837bc237305112e
-loader[ed]=91 nonce=0673 hash=1a7c40a89db4f3d0
-loader[ed]=92 nonce=0d02 hash=3143697993d48f95
-loader[ed]=93 nonce=04fa hash=ac27777fd5a1a6c6
-loader[ed]=94 nonce=0757 hash=37194a407aabfbcb
-loader[ed]=95 nonce=1678 hash=b2a703a91ec85162
-loader[ed]=96 nonce=03f5 hash=cc78b2da9d7c6509
-loader[ed]=97 nonce=04fa hash=5fd591c0c4d73017
-loader[ed]=98 nonce=09f3 hash=5a46ab38627b3915
-loader[ed]=99 nonce=04dd hash=20c00d816714bc6b
-loader[ed]=9a nonce=01e6 hash=63fba1e396cbd8f4
-loader[ed]=9b nonce=1b3e hash=261c441940500191
-loader[ed]=9c nonce=04dd hash=a541b02a22a9af7a
-loader[ed]=9d nonce=1bc2 hash=cbd778d42b02070c
-loader[ed]=9e nonce=04dd hash=72ce8c4708b053fc
-loader[ed]=9f nonce=164b hash=4c40c6ffcace4e9b
-loader[ed]=a0 nonce=000d hash=5d7d97ee51b59275
-loader[ed]=a1 nonce=0dae hash=033808091f452365
-loader[ed]=a2 nonce=0842 hash=b3db05ff1aaa17f1
-loader[ed]=a3 nonce=04fa hash=3c06a7370097c178
-loader[ed]=a4 nonce=04fa hash=f95f501b40dc3402
-loader[ed]=a5 nonce=0fd9 hash=19b8ce60564b12fd
-loader[ed]=a6 nonce=04fa hash=987477c9ec00e8ff
-loader[ed]=a7 nonce=0b41 hash=e3563ac77b838c53
-loader[ed]=a8 nonce=07fc hash=69e2642f27ba5e0a
-loader[ed]=a9 nonce=0cd5 hash=46762d3c9567d866
-loader[ed]=aa nonce=08b2 hash=f6255e9e37bf357b
-loader[ed]=ab nonce=03ed hash=091fcba8ee2610ab
-loader[ed]=ac nonce=0ad9 hash=9c6ed5abeab388eb
-loader[ed]=ad nonce=01f8 hash=b7a389da558076a5
-loader[ed]=ae nonce=025c hash=49c74b5f77638281
-loader[ed]=af nonce=040f hash=7854cd95181bbc1b
-loader[ed]=b0 nonce=01f7 hash=43ce18995c132812
-loader[ed]=b1 nonce=164b hash=aaa12550a75457b8
-loader[ed]=b2 nonce=02a0 hash=b58d5531c09bb3d8
-loader[ed]=b3 nonce=01e6 hash=384200a6c83eab65
-loader[ed]=b4 nonce=0729 hash=081afecfcd3f2912
-loader[ed]=b5 nonce=04fa hash=78871de6a4091756
-loader[ed]=b6 nonce=0b42 hash=d637e4ed1eff5f97
-loader[ed]=b7 nonce=0272 hash=0a35870b4499b820
-loader[ed]=b8 nonce=0320 hash=39dfc070355a08cd
-loader[ed]=b9 nonce=04fa hash=ba535ecff13cd626
-loader[ed]=ba nonce=04fa hash=e05a7f21e745916d
-loader[ed]=bb nonce=0ea8 hash=a10c8fe27954b1d5
-loader[ed]=bc nonce=0f68 hash=fba2560e0211c402
-loader[ed]=bd nonce=0e29 hash=8c43e49cbccb68a1
-loader[ed]=be nonce=0704 hash=3a702b7a6f39c339
-loader[ed]=bf nonce=0415 hash=33efb392a2ab1dff
-loader[ed]=c0 nonce=0256 hash=44cd39763ac1de83
-loader[ed]=c1 nonce=04bb hash=d8da7a8ea3c6d9a7
-loader[ed]=c2 nonce=0155 hash=1b1826fb14948c58
-loader[ed]=c3 nonce=01dd hash=272edbcc34045d78
-loader[ed]=c4 nonce=03c0 hash=82119a796ba6c965
-loader[ed]=c5 nonce=0320 hash=bacc36db57b41882
-loader[ed]=c6 nonce=07c3 hash=189e1d94d1320b00
-loader[ed]=c7 nonce=0686 hash=d0e6de053a8700a2
-loader[ed]=c8 nonce=040f hash=36635c496f8b6a2a
-loader[ed]=c9 nonce=04dd hash=05b23fa0a656775b
-loader[ed]=ca nonce=03ed hash=cb2d3b7e56e88282
-loader[ed]=cb nonce=04fa hash=9a2d1d95bcb2460d
-loader[ed]=cc nonce=07ae hash=841a69256bab0576
-loader[ed]=cd nonce=0b88 hash=2741e55762528ea1
-loader[ed]=ce nonce=0320 hash=d1284e1b01a17bb0
-loader[ed]=cf nonce=01dd hash=8e456abad1d8fb51
-loader[ed]=d0 nonce=04fa hash=b51ae41f8585e4c8
-loader[ed]=d1 nonce=0740 hash=7f0cde06e018799d
-loader[ed]=d2 nonce=03c4 hash=4ed74c042236953e
-loader[ed]=d3 nonce=001a hash=a1572286d89f3791
-loader[ed]=d4 nonce=04fa hash=92c8e813cb1e8f3b
-loader[ed]=d5 nonce=0146 hash=7658b47ec4074153
-loader[ed]=d6 nonce=0b2e hash=e01a2a4aa10159bb
-loader[ed]=d7 nonce=04fa hash=16ab6307ccd2b661
-loader[ed]=d8 nonce=167d hash=efaa641b7a377248
-loader[ed]=d9 nonce=000d hash=4597f9aa653a86cc
-loader[ed]=da nonce=0673 hash=73c2c1d9cc34cbab
-loader[ed]=db nonce=0134 hash=eacdb30516694d2b
-loader[ed]=dc nonce=0b0e hash=e0fc4183647d6095
-loader[ed]=dd nonce=0305 hash=ce1c77e452373491
-loader[ed]=de nonce=0e0f hash=771a7d62b6601f19
-loader[ed]=df nonce=1e07 hash=67166d65c1936f62
-loader[ed]=e0 nonce=094e hash=8470164cce679291
-loader[ed]=e1 nonce=0532 hash=bad3aab4a395dd3c
-loader[ed]=e2 nonce=06dc hash=8ec02b36e028f049
-loader[ed]=e3 nonce=0fc5 hash=a482c1b5de3536a9
-loader[ed]=e4 nonce=04fa hash=238d5c6cce9bfd66
-loader[ed]=e5 nonce=0320 hash=9d86eb2aa72a85da
-loader[ed]=e6 nonce=01f8 hash=f9d079555c64aaf3
-loader[ed]=e7 nonce=04fa hash=af4a0fc622624137
-loader[ed]=e8 nonce=0898 hash=6eb7c1397f173cfb
-loader[ed]=e9 nonce=04dd hash=717d17b35cb2043b
-loader[ed]=ea nonce=0415 hash=9942e21d0160d811
-loader[ed]=eb nonce=0155 hash=9e9f97a980bf0afb
-loader[ed]=ec nonce=0b7e hash=49e77adbdd55f760
-loader[ed]=ed nonce=0320 hash=9c7d15e9c5a21e9a
-loader[ed]=ee nonce=03ed hash=cc011386dffc3c43
-loader[ed]=ef nonce=058e hash=3d38ec7f7d6ba27f
-loader[ed]=f0 nonce=022e hash=1a6948d145596dfa
-loader[ed]=f1 nonce=04e3 hash=1e76eeb419ae9eae
-loader[ed]=f2 nonce=009b hash=1b8cbc82b1cac8de
-loader[ed]=f3 nonce=00cb hash=be1bd152cb63d4a0
-loader[ed]=f4 nonce=0256 hash=953db6b722d2bc7f
-loader[ed]=f5 nonce=0f68 hash=1cad1e526e6c988f
-loader[ed]=f6 nonce=000d hash=17b2589bfb4efb9f
-loader[ed]=f7 nonce=164b hash=671bde20a5a79e8f
-loader[ed]=f8 nonce=0166 hash=4886317830d8b59f
-loader[ed]=f9 nonce=02a0 hash=3e7007135aff1eae
-loader[ed]=fa nonce=04dd hash=68ea345c7e55dc47
-loader[ed]=fb nonce=0ea9 hash=c5283d299586606a
-loader[ed]=fc nonce=0704 hash=09197811f9978532
-loader[ed]=fd nonce=00cb hash=611f4409b48254ea
-loader[ed]=fe nonce=1e34 hash=74a7a4a0d2fff63c
-loader[ed]=ff nonce=12b2 hash=f8470136bb11ab5a
-</pre>
-</details>
+...
+```
+
+Now, we simply try all 256 images against the prod bootloader.
+The bootloader is going to consider all programs invalid but allows us to see the hash.
+To speed things up, we use a script automating this process.
+
+The hash of image `b'\xfc' * 510 + b'\x10\x44'` matches `2c522bb4ca46c833` from our calculation.
+As such, we have leaked byte `0xed` from the prod bootloader! It is `0x37`.
+
+```
+...
+loader[ed]=35 expected=aeb17c7fa5802b90 got=e8f4b0b86dadb75b false
+loader[ed]=36 expected=3196cfca1468f4bb got=b0cc2f22c6a0c771 false
+loader[ed]=37 expected=2c522bb4ca46c833 got=2c522bb4ca46c833 true
+loader[ed]=38 expected=9da6ca982ea1f214 got=4f0c03185267c8d5 false
+loader[ed]=39 expected=f9709aef66702ef5 got=94d431cc8f3004e6 false
+...
+```
+
+The remaining seven key bytes are leaked accordingly.
+This process can be sped up by permitting sampling of known adjacent key bytes during the nonce search.
+In other words, now that `0xed` is known, it's fine to permit sampling of `0xed` while generating images leaking `0xee`.
