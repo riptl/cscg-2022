@@ -413,7 +413,7 @@ All cryptographic operations so far have been added to `crypto.go` (hash, decryp
 To test our tool, we run it over the test bootloader & basic image.
 
 ```
-% go run ./crypto.go -sign -bootloader=./test_booloader.bin -target=./basic-test.bin -key 4100410041004100
+% go run ./crypto.go -sign -bootloader=./test_booloader.bin -target=./basic-test.bin
 Image hash:      b77fc96268c76d92
 Image signature: f93a50e96235aa11
 Expected hash:   b77fc96268c76d92
@@ -452,11 +452,13 @@ As expected, we get a signature error when trying to run the "basic" test-signed
 
 What's interesting however is that the signature hash is now different: `EF9580875A3CE091`.
 Presumably, only the encryption key is different between test and prod.
-The hash algorithm does not directly access the encryption key (`06ed..06f5`).
-It does however index the loader memory in `0600..0700`.
+One would expect that the hash algorithm does not directly access the encryption key (`06ed..06f5`).
 
-The reconstructed hash function is extended to report which bootloader bytes have been sampled.
-The following command returns how often a byte in the bootloader has been read by the block algorithm of the hash function.
+As it turns out, a crucial part of the block encryption algorithm involves an S-box read from `0600..0700`, which is the program code itself.
+This means that the encryption key is part of the S-box.
+
+The reconstructed hash function is extended to report which S-box bytes have been sampled.
+The following command returns how often an S-box index has been read by the block algorithm of the hash function.
 
 ```shell
 go run crypto.go -sample -bootloader=test_bootloader.bin -target=basic-test.bin
@@ -472,9 +474,9 @@ go run crypto.go -sample -bootloader=test_bootloader.bin -target=basic-test.bin
 ...
 ```
 
-At first sight, it looks like the bootloader bytes are uniformly sampled.
+At first sight, it looks like S-box accesses are uniformly sampled.
 
-There is a fatal flaw however. If we can manipulate the block algorithm of the hash function to only sample loader bytes set to zero, the butterfly-effect of the hash function never kicks in.
+There is a fatal flaw however. If we can manipulate the block algorithm of the hash function to only sample S-box inputs with output zero (`S(x)=0`), the butterfly-effect of the hash function never kicks in.
 
 ```go
 func (h *bootHasher) block(data [8]byte) {
@@ -530,14 +532,14 @@ This forms a simple, but exploitable side-channel:
 Crafted input allows using the hash function to check for equality of certain bytes, including the signing key bytes.
 
 If we can keep the hash state zero up until the very last block,
-we can brute force the last 100 hash rounds into only sampling one specific key byte.
+we can brute force the last 100 hash rounds into only sampling one specific S-box index of the key material.
 
 This reduces the complexity of attacking the key from `2^64` (brute force) to about `8*256*65536` (fairly cheap).
 
-Our attack involves brute forcing the last two bytes (nonce) until we can find one input
-that samples only the target byte within the search region (key slice of `ed..f5`).
-This is implemented by maintaining a bitset of sampled bootloader bytes while hashing.
-A valid nonce is found when a hash operation for a given key byte and input (nonce) does not sample any other key bytes.
+Our attack involves brute forcing the last two hash input bytes (nonce) until we can find one input
+that samples only the target S-box index within the search region (key slice of `ed..f5`).
+
+Example image inputs (note the nonce at the end).
 
 ```
 ..fcfcfc0000
@@ -545,20 +547,19 @@ A valid nonce is found when a hash operation for a given key byte and input (non
 ..fcfcfc0002
 ```
 
-The hash state will change based on the (unknown) target byte in the bootloader.
-This may cause the algorithm to access other key bytes as a result.
+The hash state will change based on the (unknown) S-box byte in the bootloader.
+This may cause the algorithm to read in other key bytes as a result.
+It would be too hard to construct an input that reliably only accesses one specific key byte for 256 possible S-boxes.
 
-Therefore, we will have to find such a nonce for each possible value of the target byte (256 times).
-Then, repeat this step for each target byte, beginning with `ed`.
-
+However, we can generate 256 separate inputs that target one S-box each.
 This has been implemented in the "leak" command of `crypto.go`.
 It takes about 5 minutes to run through about `65536 * 256` (about 16.8 million) combinations (skipping unnecessary calculations).
 
 ```
-go run ~/prj/cscg-2022/secureboot/crypto.go -leak -bootloader=./test_bootloader_original.bin -leak-index=0xed
+go run crypto.go -leak -bootloader=./test_bootloader_original.bin -leak-index=0xed
 ```
 
-We are left with 256 crafted images, one for each possible value of the `ed` byte.
+We are left with 256 crafted images, one for each possible S-box (identified by the loader byte `ed` we are trying to leak).
 If one of the following hashes matches, we've found the correct value.
 
 ```
@@ -571,7 +572,7 @@ loader[ed]=05 nonce=0590 hash=723ab8dc23605a35
 ...
 ```
 
-Now, we simply try all 256 images against the prod bootloader.
+Now, we simply upload all 256 images to the prod bootloader.
 The bootloader is going to consider all programs invalid but allows us to see the hash.
 To speed things up, we use a script automating this process.
 
@@ -591,3 +592,39 @@ loader[ed]=39 expected=f9709aef66702ef5 got=94d431cc8f3004e6 false
 The remaining seven key bytes are leaked accordingly.
 This process can be sped up by permitting sampling of known adjacent key bytes during the nonce search.
 In other words, now that `0xed` is known, it's fine to permit sampling of `0xed` while generating images leaking `0xee`.
+
+Full lists of pre-images (nonces) and S-boxes (key) bytes are at
+[`crypto_prod_preimages.txt`](./crypto_prod_preimages.txt) and
+[`crypto_prod_sbox.txt`](./crypto_prod_sbox.txt) respectively.
+
+The full prod encryption key is `37 f1 88 7a cc 35 1b 92`.
+
+The prod bootloader image is recovered by replacing the key of the test bootloader.
+We use the approach from [flag 2](#flag-2) to sign the program leaking the flag disk.
+
+```
+go run crypto.go -sign -bootloader=prod_bootloader.bin -target=./code/flag_program_prod.bin
+```
+
+Running this prod-signed image yields the last flag.
+
+```
+b80202bb0090ba8200b90100cd13be0090ac08c07406b40ecd10ebf5faf4
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000
+0000f07d31173559b1efEOF
+```

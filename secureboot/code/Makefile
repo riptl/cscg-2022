@@ -5,7 +5,7 @@ all: flag_program.txt
 clean:
 	rm -vf *.bin *.txt .tmp_*
 
-flag_program.txt: flag_program.bin
+flag_program_test.txt: flag_program_test.bin
 	cat flag_program.bin | xxd -p -c30 > $@
 	printf "EOF" >> $@
 
