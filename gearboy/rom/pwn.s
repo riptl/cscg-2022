@@ -42,6 +42,7 @@
 .org $200
 main:
     ; Subtract 0x61e10 from ptr MBC1MemoryRule::m_pRAMBanks.
+    ; Make it point into the Processor table.
     ld a, ($D9C8)
     sub a, 0x10
     ld ($D9C8), a
