@@ -14,7 +14,7 @@
 .endMe
 
 .romBankSize   $4000
-.romBanks      2
+.romBanks      4
 .ramSize       5 ; 64 KBytes (8 banks of 8KBytes each)
 .cartridgeType 2 ; MBC1+RAM
 .computeChecksum
@@ -41,6 +41,26 @@
 
 .org $200
 main:
-    ld a, ($C000)
-    ld a, ($8000)
-    jp main
+    ; Leak gearboy code address
+    ld a, ($D960) ; opcode=FA
+    ld ($C000), a
+    ld a, ($D961)
+    ld ($C001), a
+    ld a, ($D962)
+    ld ($C002), a
+    ld a, ($D963)
+    ld ($C003), a
+    ld a, ($D964)
+    ld ($C004), a
+    ld a, ($D965)
+    ld ($C005), a
+
+    ; Overwrite function address of Processor::OPCode0x00
+    ld a, 0xf0
+    ld ($D960), a
+    ld ($D961), a
+
+    ; Redirect code execution
+    nop           ; opcode=00
+halt:
+    jp halt
