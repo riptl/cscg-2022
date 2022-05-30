@@ -44,14 +44,14 @@
 .macro memset args dst, val, count
     ld hl, dst
     ld a, val
-    ld c, count
+    ld c, count+1
     call _memset
 .endm
 
 .macro memcpy args dst, src, count
     ld de, dst
     ld hl, src
-    ld c, count
+    ld c, count+1
     call _memcpy
 .endm
 
@@ -180,7 +180,7 @@ halt:
 
 ; memcpy_8 copies 8 bytes from source to destination.
 _memcpy_8:
-    ld c, $8
+    ld c, $9
     jp _memcpy
 
 ; memcpy copies bytes from source to destination.
@@ -188,7 +188,6 @@ _memcpy_8:
 ; hl = source address
 ; b  = byte count
 _memcpy:
-    inc c
     jp +
 -   ld a, (hl+)
     ld (de), a
@@ -202,7 +201,6 @@ _memcpy:
 ; c = byte count
 ; a = byte value
 _memset:
-    inc c
     jr +
 -   ld [hl+], a
 +   dec c
